@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import sys
+from typing import List, Optional
 
 import numpy as np
 import pandas as pd
@@ -19,8 +20,12 @@ TRAIN_PATH = SPLIT_DIR / "train_1985_2007.xlsx"
 
 CRISIS_COL = "GFDD.OI.19"  # 1 = crisis, 0 = no crisis
 ZSCORE_COL = "GFDD.SI.01"  # Z-Score (standardized)
+
 COUNTRY_COL = "Country Name"
 TIME_COL = "Time"
+# Columns to lag (y_t on X_{t-k}); add any regressor column names
+COLS_TO_LAG = [ZSCORE_COL]
+LAG_PERIODS = 1
 
 
 def _load_module(module_name: str, file_path: Path):
@@ -35,18 +40,22 @@ class_weights = _load_module("class_weights", SCRIPT_DIR / "3.2_class_weights.py
 fixed_effects = _load_module("fixed_effects", SCRIPT_DIR / "3.4_fixed_effects.py")
 
 
-def _alpha_vector(columns: pd.Index, alpha_fe: float) -> np.ndarray:
+def _alpha_vector(
+    columns: pd.Index,
+    alpha_fe: float,
+    key_regressor_cols: Optional[List[str]] = None,
+) -> np.ndarray:
     """
     Ridge penalty weights for GLM.fit_regularized.
 
-    We do NOT penalize the key regressor (Z-Score) so the coefficient remains
-    as comparable as possible across specifications. We DO penalize the fixed
-    effects and intercept, which is the part that tends to blow up under
-    (quasi-)separation.
+    We do NOT penalize key regressors (lagged variables) so coefficients
+    remain comparable. We DO penalize the fixed effects and intercept.
     """
+    key_regressor_cols = key_regressor_cols or []
     alpha = np.full(len(columns), float(alpha_fe), dtype=float)
-    if ZSCORE_COL in columns:
-        alpha[columns.get_loc(ZSCORE_COL)] = 0.0
+    for col in key_regressor_cols:
+        if col in columns:
+            alpha[columns.get_loc(col)] = 0.0
     return alpha
 
 
@@ -56,6 +65,7 @@ def _fit_ridge_glm(
     *,
     obs_weights: np.ndarray,
     alpha_fe: float,
+    key_regressor_cols: Optional[List[str]] = None,
 ):
     model = sm.GLM(
         y,
@@ -63,7 +73,7 @@ def _fit_ridge_glm(
         family=sm.families.Binomial(),
         freq_weights=obs_weights,
     )
-    alpha = _alpha_vector(X.columns, alpha_fe=alpha_fe)
+    alpha = _alpha_vector(X.columns, alpha_fe=alpha_fe, key_regressor_cols=key_regressor_cols)
     return model.fit_regularized(
         method="elastic_net",
         L1_wt=0.0,  # pure ridge
@@ -78,6 +88,7 @@ def select_alpha_via_cv(
     *,
     obs_weights: np.ndarray,
     alpha_grid: np.ndarray,
+    key_regressor_cols: Optional[List[str]] = None,
     n_splits: int = 5,
     random_state: int = 42,
 ) -> pd.DataFrame:
@@ -97,7 +108,13 @@ def select_alpha_via_cv(
             w_test = obs_weights[test_idx]
 
             try:
-                res = _fit_ridge_glm(y_train, X_train, obs_weights=w_train, alpha_fe=float(alpha_fe))
+                res = _fit_ridge_glm(
+                    y_train,
+                    X_train,
+                    obs_weights=w_train,
+                    alpha_fe=float(alpha_fe),
+                    key_regressor_cols=key_regressor_cols,
+                )
             except Exception:
                 continue
 
@@ -156,18 +173,24 @@ def main():
     df_train = standardization.winsorize(df_train, list_for_winsorization)
     df_train = standardization.standardize(df_train, list_for_standardization)
 
-    required = [ZSCORE_COL, CRISIS_COL]
+    required = list(set(COLS_TO_LAG + [CRISIS_COL]))
     if COUNTRY_COL in df_train.columns:
         required.append(COUNTRY_COL)
     if TIME_COL in df_train.columns:
         required.append(TIME_COL)
     df_train = df_train[[c for c in required if c in df_train.columns]].dropna()
+    # Lagged X: within each country (y_t on X_{t-k})
+    df_train = fixed_effects.add_lagged_columns(
+        df_train, COLS_TO_LAG, LAG_PERIODS, COUNTRY_COL, TIME_COL
+    )
+    lagged_cols = fixed_effects.lagged_column_names(COLS_TO_LAG, LAG_PERIODS)
+    df_train = df_train.dropna(subset=lagged_cols)
 
     y = np.asarray(df_train[CRISIS_COL], dtype=np.int64)
 
     X = fixed_effects.build_design_matrix(
         df_train,
-        [ZSCORE_COL],
+        lagged_cols,
         country_col=COUNTRY_COL if COUNTRY_COL in df_train.columns else None,
         time_col=TIME_COL if TIME_COL in df_train.columns else None,
     )
@@ -182,6 +205,7 @@ def main():
         X_const,
         obs_weights=obs_weights,
         alpha_grid=alpha_grid,
+        key_regressor_cols=lagged_cols,
         n_splits=5,
         random_state=42,
     )
@@ -189,9 +213,15 @@ def main():
     best_row = cv_table.dropna(subset=["logloss_mean"]).iloc[0]
     alpha_fe_best = float(best_row["alpha_fe"])
 
-    res = _fit_ridge_glm(y, X_const, obs_weights=obs_weights, alpha_fe=alpha_fe_best)
+    res = _fit_ridge_glm(
+        y,
+        X_const,
+        obs_weights=obs_weights,
+        alpha_fe=alpha_fe_best,
+        key_regressor_cols=lagged_cols,
+    )
 
-    print("Ridge-penalized logit (Z-Score + country & year fixed effects)")
+    print("Ridge-penalized logit (lagged X + country & year fixed effects)")
     print("Weights: inverse frequency (GFDD.OI.19)")
     print(f"Alpha grid (fixed effects + intercept only): {alpha_grid}")
     print("\nCross-validated alpha selection (weighted AUC):")
@@ -209,11 +239,10 @@ def main():
     auc_train = roc_auc_score(y, y_pred_proba, sample_weight=obs_weights)
     print(f"\nROC AUC (train, weighted): {auc_train:.4f}")
 
-    if ZSCORE_COL in params.index:
-        beta = float(params[ZSCORE_COL])
-        print(f"\nEconomic interpretation unit: 1 SD increase in Z-Score (standardized)")
-        print(f"Log-odds change: {beta:.4f}")
-        print(f"Odds ratio: {np.exp(beta):.4f}")
+    for col in lagged_cols:
+        if col in params.index:
+            beta = float(params[col])
+            print(f"\n{col}: log-odds change = {beta:.4f}, odds ratio = {np.exp(beta):.4f}")
 
 
 if __name__ == "__main__":

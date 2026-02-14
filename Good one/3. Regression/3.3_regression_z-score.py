@@ -34,6 +34,9 @@ CRISIS_COL = "GFDD.OI.19"
 ZSCORE_COL = "GFDD.SI.01"
 COUNTRY_COL = "Country Name"
 TIME_COL = "Time"
+# Columns to lag (y_t on X_{t-k}); add any regressor column names
+COLS_TO_LAG = [ZSCORE_COL]
+LAG_PERIODS = 1
 
 
 def main():
@@ -41,17 +44,23 @@ def main():
     df_train = pd.read_excel(TRAIN_PATH)
     df_train = standardization.winsorize(df_train, list_for_winsorization)
     df_train = standardization.standardize(df_train, list_for_standardization)
-    required = [ZSCORE_COL, CRISIS_COL]
+    required = list(set(COLS_TO_LAG + [CRISIS_COL]))
     if COUNTRY_COL in df_train.columns:
         required.append(COUNTRY_COL)
     if TIME_COL in df_train.columns:
         required.append(TIME_COL)
     df_train = df_train[[c for c in required if c in df_train.columns]].dropna()
+    # Lagged X: within each country (y_t on X_{t-k})
+    df_train = fixed_effects.add_lagged_columns(
+        df_train, COLS_TO_LAG, LAG_PERIODS, COUNTRY_COL, TIME_COL
+    )
+    lagged_cols = fixed_effects.lagged_column_names(COLS_TO_LAG, LAG_PERIODS)
+    df_train = df_train.dropna(subset=lagged_cols)
     y = np.asarray(df_train[CRISIS_COL], dtype=np.int64)
 
     X = fixed_effects.build_design_matrix(
         df_train,
-        [ZSCORE_COL],
+        lagged_cols,
         country_col=COUNTRY_COL if COUNTRY_COL in df_train.columns else None,
         time_col=TIME_COL if TIME_COL in df_train.columns else None,
     )
@@ -65,7 +74,7 @@ def main():
     model = sm.Logit(y, X_const)
     result = model.fit(weights=obs_weights, disp=0)
 
-    print("Logit (Z-Score + country & year fixed effects), class weights from inverse frequency")
+    print("Logit (lagged X + country & year fixed effects), class weights from inverse frequency")
     print("=" * 60)
     print(result.summary())
     print("\nOdds ratios (exp(coef)):")
