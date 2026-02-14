@@ -8,17 +8,21 @@ where:
   - N  = total number of samples in the training set
   - K  = number of classes (here K = 2: crisis / no crisis)
   - n_c = number of samples in class c
+
+Also fits a logit regression with Z-Score (GFDD.SI.01) only, using these weights.
 """
 
 import pandas as pd
 from pathlib import Path
+from sklearn.linear_model import LogisticRegression
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-SPLIT_DIR = SCRIPT_DIR / "split data"
+SPLIT_DIR = SCRIPT_DIR / "3.1_split_data"
 TRAIN_PATH = SPLIT_DIR / "train_1985_2007.xlsx"
 
 CRISIS_COL = "GFDD.OI.19"  # 1 = crisis, 0 = no crisis
+ZSCORE_COL = "GFDD.SI.01"  # Z-Score (single predictor for logit)
 
 
 def compute_inverse_frequency_weights(df: pd.DataFrame, target_col: str = CRISIS_COL) -> dict:
