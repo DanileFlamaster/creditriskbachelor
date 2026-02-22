@@ -33,7 +33,8 @@ def _load_module(module_name: str, file_path: Path):
 
 
 standardization = _load_module("standardization", SCRIPT_DIR / "3.3_standardization.py")
-class_weights = _load_module("class_weights", SCRIPT_DIR / "3.2_class_weights.py")
+class_weights = _load_module(
+    "class_weights", SCRIPT_DIR / "3.2_class_weights" / "3.2_class_weights.py")
 fixed_effects = _load_module("fixed_effects", SCRIPT_DIR / "3.4_fixed_effects.py")
 
 

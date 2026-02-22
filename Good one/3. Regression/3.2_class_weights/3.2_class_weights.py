@@ -18,7 +18,8 @@ from sklearn.linear_model import LogisticRegression
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-SPLIT_DIR = SCRIPT_DIR / "3.1_split_data"
+# `3.1_split_data` is a sibling directory of `3.2_class_weights`, not a child
+SPLIT_DIR = SCRIPT_DIR.parent / "3.1_split_data"
 TRAIN_PATH = SPLIT_DIR / "train_1985_2007.xlsx"
 
 CRISIS_COL = "GFDD.OI.19"  # 1 = crisis, 0 = no crisis
