@@ -13,6 +13,7 @@ from statsmodels.stats.outliers_influence import variance_inflation_factor
 # Path to Final data (from 1.1_Data_clean output)
 SCRIPT_DIR = Path(__file__).resolve().parent
 FINAL_DATA_PATH = SCRIPT_DIR / "Good one" / "1. Clean data" / "Final data.xlsx"
+REGRESSION_DIR = SCRIPT_DIR / "Good one" / "3. Regression"
 
 # List of variable names to use as controls (columns in Final data.xlsx)
 CONTROL_VARIABLES = [
@@ -152,7 +153,14 @@ def main():
     df = load_final_data()
     corr = compute_and_print_correlation_matrix(df, CONTROL_VARIABLES)
     plot_correlation_matrix_heatmap(corr)
-    compute_and_print_vif(df, CONTROL_VARIABLES)
+    vif_series = compute_and_print_vif(df, CONTROL_VARIABLES)
+    if not vif_series.empty:
+        vif_df = vif_series.reset_index()
+        vif_df.columns = ["variable", "VIF"]
+        REGRESSION_DIR.mkdir(parents=True, exist_ok=True)
+        vif_path = REGRESSION_DIR / "3.5_control_variables_VIF.xlsx"
+        vif_df.to_excel(vif_path, index=False)
+        print(f"\nVIF saved: {vif_path}")
 
 
 if __name__ == "__main__":

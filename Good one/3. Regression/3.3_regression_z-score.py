@@ -201,12 +201,39 @@ def main():
 
     p_train = result.predict(X_train_const)
     p_val = result.predict(X_val_const)
-    #p_test = result.predict(X_test_const)
+    # p_test = result.predict(X_test_const)
+
+    train_ll = log_loss(y_train, _safe_proba(p_train), sample_weight=w_train, labels=[0, 1])
+    train_auc = roc_auc_score(y_train, _safe_proba(p_train), sample_weight=w_train)
+    val_ll = log_loss(y_val, _safe_proba(p_val), sample_weight=w_val, labels=[0, 1])
+    val_auc = roc_auc_score(y_val, _safe_proba(p_val), sample_weight=w_val)
 
     print("\nPerformance:")
     _evaluate_split("Train (1985-2007)", y_train, p_train, w_train)
     _evaluate_split("Validation (2008-2010)", y_val, p_val, w_val)
-    #_evaluate_split("Test (2011-2021)", y_test, p_test, w_test)
+    # _evaluate_split("Test (2011-2021)", y_test, p_test, w_test)
+
+    # Save to Excel
+    perf_df = pd.DataFrame([
+        {"Split": "Train (1985-2007)", "weighted_log_loss": train_ll, "weighted_AUC": train_auc},
+        {"Split": "Validation (2008-2010)", "weighted_log_loss": val_ll, "weighted_AUC": val_auc},
+    ])
+    reg_df = pd.DataFrame({
+        "coefficient": result.params,
+        "std_err": result.bse,
+        "z": result.tvalues,
+        "P>|z|": result.pvalues,
+        "odds_ratio": np.exp(result.params),
+        "[0.025": result.conf_int().iloc[:, 0],
+        "0.975]": result.conf_int().iloc[:, 1],
+    })
+    std_part = "_".join(list_for_standardization)
+    script_stem = Path(__file__).stem
+    out_path = SCRIPT_DIR / f"{std_part}_{script_stem}.xlsx"
+    with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
+        perf_df.to_excel(writer, sheet_name="Performance", index=False)
+        reg_df.to_excel(writer, sheet_name="Regression")
+    print(f"\nOutput saved: {out_path}")
 
 
 if __name__ == "__main__":
