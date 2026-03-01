@@ -1,10 +1,14 @@
 """
 Control variables and correlation matrix utilities.
 Data source: Good one/1. Clean data/Final data.xlsx
+
+Importable for use in regression scripts: log_transform_variables, run_correlation_and_vif.
 """
 from pathlib import Path
+from typing import List, Optional
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 from statsmodels.stats.outliers_influence import variance_inflation_factor
@@ -29,10 +33,103 @@ CONTROL_VARIABLES = [
     "GFDD.DI.02",
     "GFDD.DI.12"]
 
+# Variables to log-transform before correlation/VIF (subset of CONTROL_VARIABLES or same columns)
+CONTROL_VARIABLES_TO_LOG = ["GFDD.AI.25","GFDD.AI.01","GFDD.AI.02"]
+
 
 def load_final_data() -> pd.DataFrame:
     """Load Final data.xlsx."""
     return pd.read_excel(FINAL_DATA_PATH)
+
+
+def log_transform_variables(
+    df: pd.DataFrame,
+    variables: List[str],
+    *,
+    inplace: bool = False,
+) -> pd.DataFrame:
+    """
+    Log-transform the given variables: log(1 + x) or, if min(x) < 0, log(1 + x - min(x)).
+
+    Safe for use in regression: use the returned DataFrame (or in-place modified) in models.
+    Column names are unchanged so the same names can be used for correlation, VIF, and regression.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame containing the variables.
+    variables : list
+        Column names to log-transform (only existing columns are transformed).
+    inplace : bool
+        If True, modify df in place; otherwise return a copy.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with specified columns log-transformed (copy if inplace=False).
+    """
+    out = df if inplace else df.copy()
+    for col in variables:
+        if col not in out.columns:
+            continue
+        x = np.asarray(out[col], dtype=float)
+        x_min = np.nanmin(x)
+        if x_min < 0:
+            out[col] = np.log1p(x - x_min)
+        else:
+            out[col] = np.log1p(x)
+    return out
+
+
+def run_correlation_and_vif(
+    df: pd.DataFrame,
+    variables: List[str],
+    *,
+    log_transform_vars: Optional[List[str]] = None,
+    save_vif_path: Optional[Path] = None,
+    save_heatmap_path: Optional[Path] = None,
+    show_heatmap: bool = True,
+) -> tuple:
+    """
+    Run correlation matrix (print), heatmap, and VIF (print); optionally save VIF to Excel.
+    Use this from regression scripts with the same structure as the standalone control-variables run.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame containing the variables.
+    variables : list
+        Column names to include in correlation and VIF.
+    log_transform_vars : list, optional
+        Subset of variables to log-transform before correlation/VIF (applied to a copy of df).
+    save_vif_path : path-like, optional
+        If set, save VIF table to this path (Excel).
+    save_heatmap_path : path-like, optional
+        If set, save correlation heatmap figure to this path (e.g. .png).
+    show_heatmap : bool
+        Whether to show the correlation heatmap (default True).
+
+    Returns
+    -------
+    tuple of (pd.DataFrame, pd.Series)
+        Correlation matrix and VIF series.
+    """
+    work = df.copy()
+    if log_transform_vars:
+        log_transform_variables(work, log_transform_vars, inplace=True)
+    corr = compute_and_print_correlation_matrix(work, variables)
+    if show_heatmap or save_heatmap_path:
+        plot_correlation_matrix_heatmap(
+            corr, save_path=save_heatmap_path, show=show_heatmap
+        )
+    vif_series = compute_and_print_vif(work, variables)
+    if save_vif_path and not vif_series.empty:
+        vif_df = vif_series.reset_index()
+        vif_df.columns = ["variable", "VIF"]
+        Path(save_vif_path).parent.mkdir(parents=True, exist_ok=True)
+        vif_df.to_excel(save_vif_path, index=False)
+        print(f"\nVIF saved: {save_vif_path}")
+    return corr, vif_series
 
 
 def compute_and_print_correlation_matrix(
@@ -72,6 +169,8 @@ def plot_correlation_matrix_heatmap(
     vmin: float = -1.0,
     vmax: float = 1.0,
     figsize: tuple = (10, 8),
+    save_path: Optional[Path] = None,
+    show: bool = True,
 ) -> None:
     """
     Plot correlation matrix as a heatmap with a temperature-style colormap.
@@ -86,6 +185,10 @@ def plot_correlation_matrix_heatmap(
         Color scale limits (correlation range).
     figsize : tuple
         Figure (width, height) in inches.
+    save_path : path-like, optional
+        If set, save the figure to this path (e.g. .png).
+    show : bool
+        Whether to call plt.show() (default True).
     """
     if corr.empty:
         return
@@ -100,7 +203,11 @@ def plot_correlation_matrix_heatmap(
             ax.text(j, i, f"{corr.iloc[i, j]:.2f}", ha="center", va="center", fontsize=8)
     plt.colorbar(im, ax=ax, label="Correlation")
     plt.tight_layout()
-    plt.show()
+    if save_path is not None:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, bbox_inches="tight")
+    if show:
+        plt.show()
 
 
 def compute_and_print_vif(
@@ -151,16 +258,14 @@ def compute_and_print_vif(
 
 def main():
     df = load_final_data()
-    corr = compute_and_print_correlation_matrix(df, CONTROL_VARIABLES)
-    plot_correlation_matrix_heatmap(corr)
-    vif_series = compute_and_print_vif(df, CONTROL_VARIABLES)
-    if not vif_series.empty:
-        vif_df = vif_series.reset_index()
-        vif_df.columns = ["variable", "VIF"]
-        REGRESSION_DIR.mkdir(parents=True, exist_ok=True)
-        vif_path = REGRESSION_DIR / "3.5_control_variables_VIF.xlsx"
-        vif_df.to_excel(vif_path, index=False)
-        print(f"\nVIF saved: {vif_path}")
+    run_correlation_and_vif(
+        df,
+        CONTROL_VARIABLES,
+        log_transform_vars=CONTROL_VARIABLES_TO_LOG or None,
+        save_vif_path=REGRESSION_DIR / "3.5_control_variables_VIF.xlsx",
+        save_heatmap_path=REGRESSION_DIR / "CorrelationControlVariablesLogartmic.png",
+        show_heatmap=True,
+    )
 
 
 if __name__ == "__main__":

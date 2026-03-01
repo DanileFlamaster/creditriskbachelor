@@ -5,7 +5,7 @@ from pathlib import Path
 import statsmodels.api as sm
 from sklearn.metrics import roc_auc_score
 # list_for_winsorization and list_for_standardization are the columns that will be winsorized and standardized   
-list_for_winsorization = ["GFDD.SI.04", "GFDD.SI.02", "GFDD.SI.01"] # Credit to Deposit, NPL, Z-Score
+list_for_winsorization = ["GFDD.SI.02", "GFDD.SI.01"] # Credit to Deposit, NPL, Z-Score
 list_for_standardization = ["GFDD.SI.01"] # Z-Score
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -16,7 +16,7 @@ standardization = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(standardization)
 
 _spec_cw = importlib.util.spec_from_file_location(
-    "class_weights", SCRIPT_DIR / "3.2_class_weights.py"
+    "class_weights", SCRIPT_DIR / "3.2_class_weights" / "3.2_class_weights.py"
 )
 class_weights = importlib.util.module_from_spec(_spec_cw)
 _spec_cw.loader.exec_module(class_weights)
@@ -35,7 +35,7 @@ ZSCORE_COL = "GFDD.SI.01"
 COUNTRY_COL = "Country Name"
 TIME_COL = "Time"
 # Columns to lag (y_t on X_{t-k}); add any regressor column names
-COLS_TO_LAG = [ZSCORE_COL]
+COLS_TO_LAG = list_for_winsorization
 LAG_PERIODS = 1
 
 

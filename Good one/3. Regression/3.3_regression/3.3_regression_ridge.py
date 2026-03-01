@@ -10,7 +10,7 @@ from sklearn.metrics import log_loss, roc_auc_score
 
 # Columns that will be winsorized and standardized
 list_for_winsorization = ["GFDD.SI.04", "GFDD.SI.02", "GFDD.SI.01"]  # Credit to Deposit, NPL, Z-Score
-list_for_standardization = ["GFDD.SI.04"]  # Z-Score
+list_for_standardization = ["GFDD.SI.01"]  # Z-Score
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PARENT_DIR = SCRIPT_DIR.parent  # Good one/3. Regression
@@ -29,7 +29,7 @@ TIME_COL = "Time"
 CONTROL_COLS = []
 
 # Columns to lag (all main banking variables + controls).
-COLS_TO_LAG = ["GFDD.SI.01", "GFDD.SI.04", "GFDD.SI.02"] + CONTROL_COLS
+COLS_TO_LAG = list_for_winsorization + CONTROL_COLS
 LAG_PERIODS = 1
 
 
@@ -330,7 +330,7 @@ def main():
         "coefficient": params,
         "odds_ratio": np.exp(params),
     })
-    std_part = "_".join(list_for_standardization)
+    std_part = "_".join(list_for_winsorization)
     script_stem = Path(__file__).stem
     perf_path = SCRIPT_DIR / f"{std_part}_{script_stem}.xlsx"
     with pd.ExcelWriter(perf_path, engine="openpyxl") as writer:
