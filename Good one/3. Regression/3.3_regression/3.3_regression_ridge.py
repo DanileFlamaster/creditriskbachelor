@@ -10,18 +10,26 @@ from sklearn.metrics import log_loss, roc_auc_score
 
 # Columns that will be winsorized and standardized
 list_for_winsorization = ["GFDD.SI.04", "GFDD.SI.02", "GFDD.SI.01"]  # Credit to Deposit, NPL, Z-Score
-list_for_standardization = ["GFDD.SI.01","GFDD.SI.04","GFDD.SI.02"]  # Z-Score
+list_for_standardization = ["GFDD.SI.04"]  # Z-Score
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-SPLIT_DIR = SCRIPT_DIR / "3.1_split_data"
+PARENT_DIR = SCRIPT_DIR.parent  # Good one/3. Regression
+SPLIT_DIR = PARENT_DIR / "3.1_split_data"
 TRAIN_PATH = SPLIT_DIR / "train_1985_2007.xlsx"
 VAL_PATH = SPLIT_DIR / "validation_2008_2010.xlsx"
 TEST_PATH = SPLIT_DIR / "test_2011_2021.xlsx"
 
-CRISIS_COL = "GFDD.OI.19"  # 1 = crisis, 0 = no crisis# Z-Score (standardized)
+
+CRISIS_COL = "GFDD.OI.19"  # 1 = crisis, 0 = no crisis
 COUNTRY_COL = "Country Name"
 TIME_COL = "Time"
-COLS_TO_LAG = ["GFDD.SI.01","GFDD.SI.04","GFDD.SI.02"]
+
+# Control variables to include (from Final data / 3.5_control_variables.py).
+# Adjust this list to your final choice of controls.
+CONTROL_COLS = []
+
+# Columns to lag (all main banking variables + controls).
+COLS_TO_LAG = ["GFDD.SI.01", "GFDD.SI.04", "GFDD.SI.02"] + CONTROL_COLS
 LAG_PERIODS = 1
 
 
@@ -32,9 +40,9 @@ def _load_module(module_name: str, file_path: Path):
     return module
 
 
-standardization = _load_module("standardization", SCRIPT_DIR / "3.3_standardization.py")
-class_weights = _load_module("class_weights", SCRIPT_DIR / "3.2_class_weights.py")
-fixed_effects = _load_module("fixed_effects", SCRIPT_DIR / "3.4_fixed_effects.py")
+standardization = _load_module("standardization", PARENT_DIR / "3.3_standardization.py")
+class_weights = _load_module("class_weights", PARENT_DIR / "3.2_class_weights" / "3.2_class_weights.py")
+fixed_effects = _load_module("fixed_effects", PARENT_DIR / "3.4_fixed_effects.py")
 
 
 def _fit_winsor_params(df: pd.DataFrame, columns: list[str], lower: float = 0.01, upper: float = 0.99) -> dict:
@@ -186,7 +194,8 @@ def main():
     df_val = pd.read_excel(VAL_PATH)
     df_test = pd.read_excel(TEST_PATH)
 
-    required = list(set(COLS_TO_LAG + [CRISIS_COL, COUNTRY_COL, TIME_COL]))
+    # Ensure we load all columns needed for lags, controls, and identifiers.
+    required = list(set(COLS_TO_LAG + CONTROL_COLS + [CRISIS_COL, COUNTRY_COL, TIME_COL]))
     df_train = df_train[[c for c in required if c in df_train.columns]].dropna().copy()
     df_val = df_val[[c for c in required if c in df_val.columns]].dropna().copy()
     df_test = df_test[[c for c in required if c in df_test.columns]].dropna().copy()
