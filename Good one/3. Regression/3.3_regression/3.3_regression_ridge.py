@@ -11,6 +11,7 @@ from sklearn.metrics import log_loss, roc_auc_score
 # Columns that will be winsorized and standardized
 list_for_winsorization = ["GFDD.SI.04", "GFDD.SI.02", "GFDD.SI.01"]  # Credit to Deposit, NPL, Z-Score
 list_for_standardization = ["GFDD.SI.01"]  # Z-Score
+list_for_control_log_transformation = []
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PARENT_DIR = SCRIPT_DIR.parent  # Good one/3. Regression
@@ -25,11 +26,21 @@ COUNTRY_COL = "Country Name"
 TIME_COL = "Time"
 
 # Control variables to include (from Final data / 3.5_control_variables.py).
-# Adjust this list to your final choice of controls.
-CONTROL_COLS = []
+# Those in list_for_control_log_transformation are log-transformed; rest in levels.
+CONTROL_COLS_FULL = [
+    "GFDD.OI.06",
+    "GFDD.OI.02",
+    "GFDD.EI.01",
+    "GFDD.EI.03",
+    "GFDD.EI.04",
+    "GFDD.SI.05",
+    "GFDD.DI.02",
+    "GFDD.DI.12",
+]
+CONTROL_COLS = [c for c in CONTROL_COLS_FULL if c not in list_for_control_log_transformation]
 
 # Columns to lag (all main banking variables + controls).
-COLS_TO_LAG = list_for_winsorization + CONTROL_COLS
+COLS_TO_LAG = list_for_winsorization + CONTROL_COLS + list_for_control_log_transformation
 LAG_PERIODS = 1
 
 
@@ -43,6 +54,8 @@ def _load_module(module_name: str, file_path: Path):
 standardization = _load_module("standardization", PARENT_DIR / "3.3_standardization.py")
 class_weights = _load_module("class_weights", PARENT_DIR / "3.2_class_weights" / "3.2_class_weights.py")
 fixed_effects = _load_module("fixed_effects", PARENT_DIR / "3.4_fixed_effects.py")
+# 3.5 at project root (parent of "Good one")
+control_variables = _load_module("control_variables", PARENT_DIR.parent.parent / "3.5_control_variables.py")
 
 
 def _fit_winsor_params(df: pd.DataFrame, columns: list[str], lower: float = 0.01, upper: float = 0.99) -> dict:
@@ -195,7 +208,7 @@ def main():
     df_test = pd.read_excel(TEST_PATH)
 
     # Ensure we load all columns needed for lags, controls, and identifiers.
-    required = list(set(COLS_TO_LAG + CONTROL_COLS + [CRISIS_COL, COUNTRY_COL, TIME_COL]))
+    required = list(set(COLS_TO_LAG + [CRISIS_COL, COUNTRY_COL, TIME_COL]))
     df_train = df_train[[c for c in required if c in df_train.columns]].dropna().copy()
     df_val = df_val[[c for c in required if c in df_val.columns]].dropna().copy()
     df_test = df_test[[c for c in required if c in df_test.columns]].dropna().copy()
@@ -210,6 +223,14 @@ def main():
     df_train = _apply_standard_params(df_train, std_params)
     df_val = _apply_standard_params(df_val, std_params)
     df_test = _apply_standard_params(df_test, std_params)
+
+    # Log-transform control variables (fit on train, apply same transform to val/test)
+    log_vars = [c for c in list_for_control_log_transformation if c in df_train.columns]
+    if log_vars:
+        train_mins = {col: float(np.nanmin(df_train[col].values)) for col in log_vars}
+        control_variables.log_transform_variables(df_train, log_vars, inplace=True)
+        control_variables.log_transform_variables(df_val, log_vars, inplace=True, min_per_var=train_mins)
+        control_variables.log_transform_variables(df_test, log_vars, inplace=True, min_per_var=train_mins)
 
     df_train_lag = fixed_effects.add_lagged_columns(
         df_train, COLS_TO_LAG, LAG_PERIODS, COUNTRY_COL, TIME_COL
@@ -241,6 +262,16 @@ def main():
     y_train = np.asarray(df_train_lag[CRISIS_COL], dtype=np.int64)
     y_val = np.asarray(df_val_lag[CRISIS_COL], dtype=np.int64)
     y_test = np.asarray(df_test_lag[CRISIS_COL], dtype=np.int64)
+
+    train_classes = np.unique(y_train).tolist()
+    if len(train_classes) < 2:
+        raise ValueError(
+            f"Training set has only one class ({train_classes}) after filtering. "
+            "Ridge logit cannot learn; you get train_logloss≈0 and AUC=0.5. "
+            "Ensure the train split has both crisis and non-crisis rows: check that all COLS_TO_LAG "
+            "(and control columns) exist in the split files and that dropna() is not removing all of one class. "
+            "You may need to add the control columns to the split data or temporarily reduce CONTROL_COLS_FULL."
+        )
 
     country_categories = sorted(df_train[COUNTRY_COL].dropna().astype(str).unique().tolist())
     year_categories = sorted(pd.to_numeric(df_train[TIME_COL], errors="coerce").dropna().astype(int).unique().tolist())
@@ -275,6 +306,8 @@ def main():
     X_test_const = _align_X(sm.add_constant(X_test, has_constant="add"), X_train_const.columns)
 
     class_weight_map = class_weights.compute_inverse_frequency_weights(df_train_lag, target_col=CRISIS_COL)
+    for k in (0, 1):
+        class_weight_map.setdefault(k, 1.0)
     w_train = np.array([class_weight_map[int(v)] for v in y_train], dtype=float)
     w_val = np.array([class_weight_map[int(v)] for v in y_val], dtype=float)
     w_test = np.array([class_weight_map[int(v)] for v in y_test], dtype=float)
@@ -330,9 +363,12 @@ def main():
         "coefficient": params,
         "odds_ratio": np.exp(params),
     })
+    n_controls = len(CONTROL_COLS_FULL)
+    n_logged = len(list_for_control_log_transformation)
     std_part = "_".join(list_for_winsorization)
     script_stem = Path(__file__).stem
-    perf_path = SCRIPT_DIR / f"{std_part}_{script_stem}.xlsx"
+    control_prefix = f"Control_{n_logged}_{n_controls}_"
+    perf_path = SCRIPT_DIR / f"{control_prefix}{std_part}_{script_stem}.xlsx"
     with pd.ExcelWriter(perf_path, engine="openpyxl") as writer:
         perf_df.to_excel(writer, sheet_name="Performance", index=False)
         reg_df.to_excel(writer, sheet_name="Regression")

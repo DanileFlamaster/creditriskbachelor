@@ -5,7 +5,7 @@ Data source: Good one/1. Clean data/Final data.xlsx
 Importable for use in regression scripts: log_transform_variables, run_correlation_and_vif.
 """
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -47,6 +47,7 @@ def log_transform_variables(
     variables: List[str],
     *,
     inplace: bool = False,
+    min_per_var: Optional[Dict[str, float]] = None,
 ) -> pd.DataFrame:
     """
     Log-transform the given variables: log(1 + x) or, if min(x) < 0, log(1 + x - min(x)).
@@ -62,6 +63,9 @@ def log_transform_variables(
         Column names to log-transform (only existing columns are transformed).
     inplace : bool
         If True, modify df in place; otherwise return a copy.
+    min_per_var : dict, optional
+        If provided, use these min values per column for the shift (e.g. from train).
+        Enables consistent apply on val/test when fitted on train.
 
     Returns
     -------
@@ -73,7 +77,10 @@ def log_transform_variables(
         if col not in out.columns:
             continue
         x = np.asarray(out[col], dtype=float)
-        x_min = np.nanmin(x)
+        if min_per_var is not None and col in min_per_var:
+            x_min = min_per_var[col]
+        else:
+            x_min = np.nanmin(x)
         if x_min < 0:
             out[col] = np.log1p(x - x_min)
         else:
