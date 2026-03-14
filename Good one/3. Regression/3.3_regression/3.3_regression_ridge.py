@@ -1,4 +1,5 @@
 import importlib.util
+import math
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -149,6 +150,42 @@ def _fit_ridge_glm(
         L1_wt=0.0,  # pure ridge
         alpha=alpha,
         maxiter=2000,
+    )
+
+
+def _ridge_inference_table(
+    model,
+    params: np.ndarray,
+    columns: pd.Index,
+    alpha: np.ndarray,
+) -> pd.DataFrame:
+    params = np.asarray(params, dtype=float)
+    observed_info = -np.asarray(model.hessian(params), dtype=float)
+    penalized_info = observed_info + np.diag(np.asarray(alpha, dtype=float))
+    cov = np.linalg.pinv(penalized_info)
+    std_err = np.sqrt(np.clip(np.diag(cov), a_min=0.0, a_max=None))
+    z_stats = np.divide(
+        params,
+        std_err,
+        out=np.full(params.shape, np.nan, dtype=float),
+        where=std_err > 0,
+    )
+    p_values = np.array(
+        [
+            math.erfc(abs(float(z)) / math.sqrt(2.0)) if np.isfinite(z) else np.nan
+            for z in z_stats
+        ],
+        dtype=float,
+    )
+    return pd.DataFrame(
+        {
+            "coefficient": params,
+            "std_err_approx": std_err,
+            "z_approx": z_stats,
+            "p_value_approx": p_values,
+            "odds_ratio": np.exp(params),
+        },
+        index=columns,
     )
 
 
@@ -333,6 +370,11 @@ def main():
         alpha_fe=alpha_fe_best,
         key_regressor_cols=lagged_cols,
     )
+    alpha_best = _alpha_vector(
+        X_train_const.columns,
+        alpha_fe=alpha_fe_best,
+        key_regressor_cols=lagged_cols,
+    )
 
     print("Ridge-penalized logit (lagged X + country & year fixed effects)")
     print("Weights: inverse frequency (GFDD.OI.19)")
@@ -342,27 +384,33 @@ def main():
     print(f"\nSelected alpha_fe: {alpha_fe_best:g}")
 
     params = pd.Series(res.params, index=X_train_const.columns)
-    print("\nCoefficients:")
-    print(params.to_string())
-    print("\nOdds ratios (exp(coef)):")
-    print(np.exp(params).to_string())
+    reg_df = _ridge_inference_table(
+        res.model,
+        res.params,
+        X_train_const.columns,
+        alpha_best,
+    )
+    print("\nCoefficients with approximate p-values:")
+    print(reg_df.to_string())
 
     train_ll, train_auc = _metrics(y_train, res.predict(X_train_const), w_train)
-    val_ll, val_auc = _metrics(y_val, res.predict(X_val_const), w_val)
+    val_proba = res.predict(X_val_const)
+    val_ll, val_auc = _metrics(y_val, val_proba, w_val)
     # test_ll, test_auc = _metrics(y_test, res.predict(X_test_const), w_test)
     print("\nPerformance:")
     print(f"Train (1985-2007): weighted log-loss={train_ll:.4f} | weighted AUC={train_auc:.4f}")
     print(f"Validation (2008-2010): weighted log-loss={val_ll:.4f} | weighted AUC={val_auc:.4f}")
     # print(f"Test (2011-2021): weighted log-loss={test_ll:.4f} | weighted AUC={test_auc:.4f}")
 
+    validation_pred_df = df_val_lag[[COUNTRY_COL, TIME_COL, CRISIS_COL]].copy()
+    validation_pred_df = validation_pred_df.rename(columns={CRISIS_COL: "actual_crisis"})
+    validation_pred_df["predicted_crisis_prob"] = np.asarray(val_proba, dtype=float)
+    validation_pred_df["predicted_crisis"] = (np.asarray(val_proba, dtype=float) >= 0.5).astype(np.int64)
+
     perf_df = pd.DataFrame([
         {"Split": "Train (1985-2007)", "weighted_log_loss": train_ll, "weighted_AUC": train_auc},
         {"Split": "Validation (2008-2010)", "weighted_log_loss": val_ll, "weighted_AUC": val_auc},
     ])
-    reg_df = pd.DataFrame({
-        "coefficient": params,
-        "odds_ratio": np.exp(params),
-    })
     n_controls = len(CONTROL_COLS_FULL)
     n_logged = len(list_for_control_log_transformation)
     std_part = "_".join(list_for_winsorization)
@@ -373,6 +421,7 @@ def main():
         perf_df.to_excel(writer, sheet_name="Performance", index=False)
         reg_df.to_excel(writer, sheet_name="Regression")
         val_table.to_excel(writer, sheet_name="Alpha_selection", index=False)
+        validation_pred_df.to_excel(writer, sheet_name="Validation_predictions", index=False)
     print(f"\nPerformance saved: {perf_path}")
 
     for col in lagged_cols:
