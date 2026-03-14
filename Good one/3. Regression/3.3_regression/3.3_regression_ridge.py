@@ -25,6 +25,9 @@ TEST_PATH = SPLIT_DIR / "test_2011_2021.xlsx"
 CRISIS_COL = "GFDD.OI.19"  # 1 = crisis, 0 = no crisis
 COUNTRY_COL = "Country Name"
 TIME_COL = "Time"
+YEAR_FIXED_EFFECTS: bool = False  # True: include year dummies; False: country FE only
+TIME_trend: bool = False  # True: include a linear time trend based on year
+TIME_TREND_COL = "time_trend"
 
 # Control variables to include (from Final data / 3.5_control_variables.py).
 # Those in list_for_control_log_transformation are log-transformed; rest in levels.
@@ -111,6 +114,13 @@ def _metrics(y: np.ndarray, proba: np.ndarray, weights: np.ndarray) -> tuple[flo
     except Exception:
         auc = float("nan")
     return float(ll), float(auc)
+
+
+def _add_time_trend(df: pd.DataFrame, *, base_year: float, time_col: str, trend_col: str) -> pd.DataFrame:
+    out = df.copy()
+    years = pd.to_numeric(out[time_col], errors="coerce").astype(float)
+    out[trend_col] = years - float(base_year)
+    return out
 
 
 def _alpha_vector(
@@ -296,6 +306,12 @@ def main():
         strict_time_order=True,
     ).dropna(subset=lagged_cols)
 
+    if TIME_trend:
+        base_year = float(pd.to_numeric(df_train[TIME_COL], errors="coerce").dropna().min())
+        df_train_lag = _add_time_trend(df_train_lag, base_year=base_year, time_col=TIME_COL, trend_col=TIME_TREND_COL)
+        df_val_lag = _add_time_trend(df_val_lag, base_year=base_year, time_col=TIME_COL, trend_col=TIME_TREND_COL)
+        df_test_lag = _add_time_trend(df_test_lag, base_year=base_year, time_col=TIME_COL, trend_col=TIME_TREND_COL)
+
     y_train = np.asarray(df_train_lag[CRISIS_COL], dtype=np.int64)
     y_val = np.asarray(df_val_lag[CRISIS_COL], dtype=np.int64)
     y_test = np.asarray(df_test_lag[CRISIS_COL], dtype=np.int64)
@@ -311,29 +327,34 @@ def main():
         )
 
     country_categories = sorted(df_train[COUNTRY_COL].dropna().astype(str).unique().tolist())
-    year_categories = sorted(pd.to_numeric(df_train[TIME_COL], errors="coerce").dropna().astype(int).unique().tolist())
+    year_categories = (
+        sorted(pd.to_numeric(df_train[TIME_COL], errors="coerce").dropna().astype(int).unique().tolist())
+        if YEAR_FIXED_EFFECTS
+        else None
+    )
+    design_feature_cols = lagged_cols + ([TIME_TREND_COL] if TIME_trend else [])
 
     X_train = fixed_effects.build_design_matrix(
         df_train_lag,
-        lagged_cols,
+        design_feature_cols,
         country_col=COUNTRY_COL,
-        time_col=TIME_COL,
+        time_col=TIME_COL if YEAR_FIXED_EFFECTS else None,
         country_categories=country_categories,
         year_categories=year_categories,
     )
     X_val = fixed_effects.build_design_matrix(
         df_val_lag,
-        lagged_cols,
+        design_feature_cols,
         country_col=COUNTRY_COL,
-        time_col=TIME_COL,
+        time_col=TIME_COL if YEAR_FIXED_EFFECTS else None,
         country_categories=country_categories,
         year_categories=year_categories,
     )
     X_test = fixed_effects.build_design_matrix(
         df_test_lag,
-        lagged_cols,
+        design_feature_cols,
         country_col=COUNTRY_COL,
-        time_col=TIME_COL,
+        time_col=TIME_COL if YEAR_FIXED_EFFECTS else None,
         country_categories=country_categories,
         year_categories=year_categories,
     )
