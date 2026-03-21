@@ -26,6 +26,7 @@ CRISIS_COL = "GFDD.OI.19"  # 1 = crisis, 0 = no crisis
 COUNTRY_COL = "Country Name"
 TIME_COL = "Time"
 YEAR_FIXED_EFFECTS: bool = False  # True: include year dummies; False: country FE only
+GDP: bool = True  # True: include Read_GDP_growth as a FE proxy
 TIME_trend: bool = False  # True: include a linear time trend based on year
 TIME_TREND_COL = "time_trend"
 
@@ -255,7 +256,7 @@ def main():
     df_test = pd.read_excel(TEST_PATH)
 
     # Ensure we load all columns needed for lags, controls, and identifiers.
-    required = list(set(COLS_TO_LAG + [CRISIS_COL, COUNTRY_COL, TIME_COL]))
+    required = list(set(COLS_TO_LAG + [CRISIS_COL, COUNTRY_COL, TIME_COL] + (["Read_GDP_growth"] if GDP else [])))
     df_train = df_train[[c for c in required if c in df_train.columns]].dropna().copy()
     df_val = df_val[[c for c in required if c in df_val.columns]].dropna().copy()
     df_test = df_test[[c for c in required if c in df_test.columns]].dropna().copy()
@@ -332,7 +333,7 @@ def main():
         if YEAR_FIXED_EFFECTS
         else None
     )
-    design_feature_cols = lagged_cols + ([TIME_TREND_COL] if TIME_trend else [])
+    design_feature_cols = lagged_cols + ([TIME_TREND_COL] if TIME_trend else []) + (["Read_GDP_growth"] if GDP else [])
 
     X_train = fixed_effects.build_design_matrix(
         df_train_lag,
