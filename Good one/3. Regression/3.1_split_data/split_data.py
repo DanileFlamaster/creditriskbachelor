@@ -7,7 +7,7 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DATA_DIR = SCRIPT_DIR.parent / "1. Clean data"
-FINAL_DATA_PATH = DATA_DIR / "Final data.xlsx"
+FINAL_DATA_PATH = r"D:\creditriskbachelor\Good one\1. Clean data\Final data.xlsx" 
 
 TIME_COL = "Time"
 CRISIS_COL = "GFDD.OI.19"

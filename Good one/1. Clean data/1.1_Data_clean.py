@@ -1,5 +1,6 @@
 import pandas as pd
 from pathlib import Path
+from typing import Union
 
 
 def excel_to_dataframe(file_path: str, sheet_name=0, **kwargs) -> pd.DataFrame:
@@ -78,8 +79,33 @@ def non_na_coverage(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def append_real_gdp_growth(df: pd.DataFrame, gdp_file_path: Union[str, Path]) -> pd.DataFrame:
+    """
+    Append real GDP growth by matching on country-year.
+    """
+    gdp_df = pd.read_csv(gdp_file_path)
+    gdp_df = (
+        gdp_df[["Code", "Year", "GDP growth observations"]]
+        .rename(columns={"GDP growth observations": "Read_GDP_growth"})
+        .drop_duplicates(subset=["Code", "Year"])
+    )
+
+    df = df.copy()
+    df["Time"] = pd.to_numeric(df["Time"], errors="coerce").astype("Int64")
+    gdp_df["Year"] = pd.to_numeric(gdp_df["Year"], errors="coerce").astype("Int64")
+
+    return df.merge(
+        gdp_df,
+        left_on=["Country Code", "Time"],
+        right_on=["Code", "Year"],
+        how="left",
+        validate="m:1",
+    ).drop(columns=["Code", "Year"])
+
+
 # --- Insert your file path here ---
-FILE_PATH = r"C:\Users\user\Desktop\Licenta\work\2\DBCleaned.xlsx"
+FILE_PATH = r"D:\creditriskbachelor\Good one\1. Clean data\DBCleaned.xlsx"
+GDP_FILE_PATH = Path(__file__).resolve().parents[1] / "real_gdp_growth.csv"
 
 df = excel_to_dataframe(FILE_PATH)
 
@@ -89,6 +115,7 @@ df = trim_by_year(df, TIME_COLUMN)
 
 # Replace "Dot dot." (and variants) with null
 df = replace_dotdot_with_null(df)
+df = append_real_gdp_growth(df, GDP_FILE_PATH)
 
 # Non-NA coverage: define the columns you want to check
 COLUMNS_TO_CHECK = ["GFDD.SI.04", "GFDD.SI.02", "GFDD.SI.01"]  # replace with your column names
