@@ -103,6 +103,27 @@ def append_real_gdp_growth(df: pd.DataFrame, gdp_file_path: Union[str, Path]) ->
     ).drop(columns=["Code", "Year"])
 
 
+def extract_world_gdp_growth(
+    gdp_file_path: Union[str, Path], start_year: int, end_year: int
+) -> pd.DataFrame:
+    """
+    Build a year-level table for world GDP growth.
+    """
+    world_gdp_df = pd.read_csv(gdp_file_path)
+    world_gdp_df = (
+        world_gdp_df.loc[world_gdp_df["Entity"] == "World", ["Year", "GDP growth observations"]]
+        .rename(columns={"GDP growth observations": "World_GDP_growth"})
+        .drop_duplicates(subset=["Year"])
+        .sort_values("Year")
+        .reset_index(drop=True)
+    )
+    world_gdp_df["Year"] = pd.to_numeric(world_gdp_df["Year"], errors="coerce").astype("Int64")
+
+    return world_gdp_df.loc[
+        (world_gdp_df["Year"] >= start_year) & (world_gdp_df["Year"] <= end_year)
+    ].reset_index(drop=True)
+
+
 # --- Insert your file path here ---
 FILE_PATH = r"D:\creditriskbachelor\Good one\1. Clean data\DBCleaned.xlsx"
 GDP_FILE_PATH = Path(__file__).resolve().parents[1] / "real_gdp_growth.csv"
@@ -116,6 +137,7 @@ df = trim_by_year(df, TIME_COLUMN)
 # Replace "Dot dot." (and variants) with null
 df = replace_dotdot_with_null(df)
 df = append_real_gdp_growth(df, GDP_FILE_PATH)
+world_gdp_growth_df = extract_world_gdp_growth(GDP_FILE_PATH, 1985, 2021)
 
 # Non-NA coverage: define the columns you want to check
 COLUMNS_TO_CHECK = ["GFDD.SI.04", "GFDD.SI.02", "GFDD.SI.01"]  # replace with your column names
@@ -125,5 +147,7 @@ print(df.head())
 
 # Save cleaned data in the same folder as the original file
 FINAL_DATA_PATH = Path(FILE_PATH).parent / "Final data.xlsx"
-df.to_excel(FINAL_DATA_PATH, index=False)
+with pd.ExcelWriter(FINAL_DATA_PATH) as writer:
+    df.to_excel(writer, sheet_name="Cleaned data", index=False)
+    world_gdp_growth_df.to_excel(writer, sheet_name="World GDP Growth", index=False)
 print(f"Saved to: {FINAL_DATA_PATH}")

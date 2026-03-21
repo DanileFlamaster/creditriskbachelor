@@ -10,6 +10,7 @@ DATA_DIR = SCRIPT_DIR.parent / "1. Clean data"
 FINAL_DATA_PATH = r"D:\creditriskbachelor\Good one\1. Clean data\Final data.xlsx" 
 
 TIME_COL = "Time"
+WORLD_TIME_COL = "Year"
 CRISIS_COL = "GFDD.OI.19"
 
 # Period definitions (inclusive)
@@ -19,7 +20,13 @@ TEST_YEARS = (2011, 2021)
 
 
 def load_final_data():
-    return pd.read_excel(FINAL_DATA_PATH)
+    cleaned_df = pd.read_excel(FINAL_DATA_PATH, sheet_name="Cleaned data")
+    world_gdp_df = pd.read_excel(FINAL_DATA_PATH, sheet_name="World GDP Growth")
+    return cleaned_df, world_gdp_df
+
+
+def split_by_year(df, time_col, start_year, end_year):
+    return df[(df[time_col] >= start_year) & (df[time_col] <= end_year)]
 
 
 def imbalance_row(df, period_name):
@@ -35,21 +42,31 @@ def imbalance_row(df, period_name):
 
 
 def main():
-    df = load_final_data()
+    df, world_gdp_df = load_final_data()
     print(f"Loaded: {FINAL_DATA_PATH}")
     print(f"Total rows: {len(df)}")
 
-    train = df[(df[TIME_COL] >= TRAIN_YEARS[0]) & (df[TIME_COL] <= TRAIN_YEARS[1])]
-    val = df[(df[TIME_COL] >= VAL_YEARS[0]) & (df[TIME_COL] <= VAL_YEARS[1])]
-    test = df[(df[TIME_COL] >= TEST_YEARS[0]) & (df[TIME_COL] <= TEST_YEARS[1])]
+    train = split_by_year(df, TIME_COL, TRAIN_YEARS[0], TRAIN_YEARS[1])
+    val = split_by_year(df, TIME_COL, VAL_YEARS[0], VAL_YEARS[1])
+    test = split_by_year(df, TIME_COL, TEST_YEARS[0], TEST_YEARS[1])
+
+    world_train = split_by_year(world_gdp_df, WORLD_TIME_COL, TRAIN_YEARS[0], TRAIN_YEARS[1])
+    world_val = split_by_year(world_gdp_df, WORLD_TIME_COL, VAL_YEARS[0], VAL_YEARS[1])
+    world_test = split_by_year(world_gdp_df, WORLD_TIME_COL, TEST_YEARS[0], TEST_YEARS[1])
 
     # Save splits
     train_path = SCRIPT_DIR / "train_1985_2007.xlsx"
     val_path = SCRIPT_DIR / "validation_2008_2010.xlsx"
     test_path = SCRIPT_DIR / "test_2011_2021.xlsx"
-    train.to_excel(train_path, index=False)
-    val.to_excel(val_path, index=False)
-    test.to_excel(test_path, index=False)
+    with pd.ExcelWriter(train_path) as writer:
+        train.to_excel(writer, sheet_name="Cleaned data", index=False)
+        world_train.to_excel(writer, sheet_name="World GDP Growth", index=False)
+    with pd.ExcelWriter(val_path) as writer:
+        val.to_excel(writer, sheet_name="Cleaned data", index=False)
+        world_val.to_excel(writer, sheet_name="World GDP Growth", index=False)
+    with pd.ExcelWriter(test_path) as writer:
+        test.to_excel(writer, sheet_name="Cleaned data", index=False)
+        world_test.to_excel(writer, sheet_name="World GDP Growth", index=False)
     print(f"\nSaved:\n  {train_path}\n  {val_path}\n  {test_path}")
     print(f"  Train: {len(train)} rows | Validation: {len(val)} rows | Test: {len(test)} rows")
 

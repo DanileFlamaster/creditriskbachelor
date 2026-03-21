@@ -25,10 +25,13 @@ TEST_PATH = SPLIT_DIR / "test_2011_2021.xlsx"
 CRISIS_COL = "GFDD.OI.19"  # 1 = crisis, 0 = no crisis
 COUNTRY_COL = "Country Name"
 TIME_COL = "Time"
-YEAR_FIXED_EFFECTS: bool = False  # True: include year dummies; False: country FE only
+COUNTRY_FIXED_EFFECTS: bool = False  # True: include country dummies
+YEAR_FIXED_EFFECTS: bool = False  # True: include year dummies
 GDP: bool = True  # True: include Read_GDP_growth as a FE proxy
+WORLD_GDP: bool = False  # True: include World_GDP_growth from the split workbook's World GDP Growth sheet
 TIME_trend: bool = False  # True: include a linear time trend based on year
 TIME_TREND_COL = "time_trend"
+
 
 # Control variables to include (from Final data / 3.5_control_variables.py).
 # Those in list_for_control_log_transformation are log-transformed; rest in levels.
@@ -115,6 +118,26 @@ def _metrics(y: np.ndarray, proba: np.ndarray, weights: np.ndarray) -> tuple[flo
     except Exception:
         auc = float("nan")
     return float(ll), float(auc)
+
+
+def _load_split_with_world_gdp(split_path: Path) -> pd.DataFrame:
+    cleaned_df = pd.read_excel(split_path, sheet_name="Cleaned data")
+    if not WORLD_GDP:
+        return cleaned_df
+
+    world_gdp_df = pd.read_excel(split_path, sheet_name="World GDP Growth")
+    world_gdp_df = world_gdp_df[["Year", "World_GDP_growth"]].drop_duplicates(subset=["Year"])
+
+    out = cleaned_df.copy()
+    out[TIME_COL] = pd.to_numeric(out[TIME_COL], errors="coerce").astype("Int64")
+    world_gdp_df["Year"] = pd.to_numeric(world_gdp_df["Year"], errors="coerce").astype("Int64")
+    return out.merge(
+        world_gdp_df,
+        left_on=TIME_COL,
+        right_on="Year",
+        how="left",
+        validate="m:1",
+    ).drop(columns=["Year"])
 
 
 def _add_time_trend(df: pd.DataFrame, *, base_year: float, time_col: str, trend_col: str) -> pd.DataFrame:
@@ -251,12 +274,19 @@ def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-    df_train = pd.read_excel(TRAIN_PATH)
-    df_val = pd.read_excel(VAL_PATH)
-    df_test = pd.read_excel(TEST_PATH)
+    df_train = _load_split_with_world_gdp(TRAIN_PATH)
+    df_val = _load_split_with_world_gdp(VAL_PATH)
+    df_test = _load_split_with_world_gdp(TEST_PATH)
 
     # Ensure we load all columns needed for lags, controls, and identifiers.
-    required = list(set(COLS_TO_LAG + [CRISIS_COL, COUNTRY_COL, TIME_COL] + (["Read_GDP_growth"] if GDP else [])))
+    required = list(
+        set(
+            COLS_TO_LAG
+            + [CRISIS_COL, COUNTRY_COL, TIME_COL]
+            + (["Read_GDP_growth"] if GDP else [])
+            + (["World_GDP_growth"] if WORLD_GDP else [])
+        )
+    )
     df_train = df_train[[c for c in required if c in df_train.columns]].dropna().copy()
     df_val = df_val[[c for c in required if c in df_val.columns]].dropna().copy()
     df_test = df_test[[c for c in required if c in df_test.columns]].dropna().copy()
@@ -327,18 +357,27 @@ def main():
             "You may need to add the control columns to the split data or temporarily reduce CONTROL_COLS_FULL."
         )
 
-    country_categories = sorted(df_train[COUNTRY_COL].dropna().astype(str).unique().tolist())
+    country_categories = (
+        sorted(df_train[COUNTRY_COL].dropna().astype(str).unique().tolist())
+        if COUNTRY_FIXED_EFFECTS
+        else None
+    )
     year_categories = (
         sorted(pd.to_numeric(df_train[TIME_COL], errors="coerce").dropna().astype(int).unique().tolist())
         if YEAR_FIXED_EFFECTS
         else None
     )
-    design_feature_cols = lagged_cols + ([TIME_TREND_COL] if TIME_trend else []) + (["Read_GDP_growth"] if GDP else [])
+    design_feature_cols = (
+        lagged_cols
+        + ([TIME_TREND_COL] if TIME_trend else [])
+        + (["Read_GDP_growth"] if GDP else [])
+        + (["World_GDP_growth"] if WORLD_GDP else [])
+    )
 
     X_train = fixed_effects.build_design_matrix(
         df_train_lag,
         design_feature_cols,
-        country_col=COUNTRY_COL,
+        country_col=COUNTRY_COL if COUNTRY_FIXED_EFFECTS else None,
         time_col=TIME_COL if YEAR_FIXED_EFFECTS else None,
         country_categories=country_categories,
         year_categories=year_categories,
@@ -346,7 +385,7 @@ def main():
     X_val = fixed_effects.build_design_matrix(
         df_val_lag,
         design_feature_cols,
-        country_col=COUNTRY_COL,
+        country_col=COUNTRY_COL if COUNTRY_FIXED_EFFECTS else None,
         time_col=TIME_COL if YEAR_FIXED_EFFECTS else None,
         country_categories=country_categories,
         year_categories=year_categories,
@@ -354,7 +393,7 @@ def main():
     X_test = fixed_effects.build_design_matrix(
         df_test_lag,
         design_feature_cols,
-        country_col=COUNTRY_COL,
+        country_col=COUNTRY_COL if COUNTRY_FIXED_EFFECTS else None,
         time_col=TIME_COL if YEAR_FIXED_EFFECTS else None,
         country_categories=country_categories,
         year_categories=year_categories,
@@ -398,7 +437,12 @@ def main():
         key_regressor_cols=lagged_cols,
     )
 
-    print("Ridge-penalized logit (lagged X + country & year fixed effects)")
+    print("Ridge-penalized logit")
+    print(
+        f"Country fixed effects: {COUNTRY_FIXED_EFFECTS} | "
+        f"Year fixed effects: {YEAR_FIXED_EFFECTS} | "
+        f"GDP: {GDP} | World GDP: {WORLD_GDP} | Time trend: {TIME_trend}"
+    )
     print("Weights: inverse frequency (GFDD.OI.19)")
     print(f"Alpha grid (fixed effects + intercept only): {alpha_grid}")
     print("\nValidation-based alpha selection:")
