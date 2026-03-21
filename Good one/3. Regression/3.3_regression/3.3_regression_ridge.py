@@ -30,6 +30,7 @@ YEAR_FIXED_EFFECTS: bool = False  # True: include year dummies
 GDP: bool = True  # True: include Read_GDP_growth as a FE proxy
 WORLD_GDP: bool = False  # True: include World_GDP_growth from the split workbook's World GDP Growth sheet
 TIME_trend: bool = False  # True: include a linear time trend based on year
+Testing: bool = True  # True: also evaluate the fitted model on the test split
 TIME_TREND_COL = "time_trend"
 
 
@@ -441,7 +442,7 @@ def main():
     print(
         f"Country fixed effects: {COUNTRY_FIXED_EFFECTS} | "
         f"Year fixed effects: {YEAR_FIXED_EFFECTS} | "
-        f"GDP: {GDP} | World GDP: {WORLD_GDP} | Time trend: {TIME_trend}"
+        f"GDP: {GDP} | World GDP: {WORLD_GDP} | Time trend: {TIME_trend} | Testing: {Testing}"
     )
     print("Weights: inverse frequency (GFDD.OI.19)")
     print(f"Alpha grid (fixed effects + intercept only): {alpha_grid}")
@@ -462,21 +463,39 @@ def main():
     train_ll, train_auc = _metrics(y_train, res.predict(X_train_const), w_train)
     val_proba = res.predict(X_val_const)
     val_ll, val_auc = _metrics(y_val, val_proba, w_val)
-    # test_ll, test_auc = _metrics(y_test, res.predict(X_test_const), w_test)
+    if Testing:
+        test_proba = res.predict(X_test_const)
+        test_ll, test_auc = _metrics(y_test, test_proba, w_test)
     print("\nPerformance:")
     print(f"Train (1985-2007): weighted log-loss={train_ll:.4f} | weighted AUC={train_auc:.4f}")
     print(f"Validation (2008-2010): weighted log-loss={val_ll:.4f} | weighted AUC={val_auc:.4f}")
-    # print(f"Test (2011-2021): weighted log-loss={test_ll:.4f} | weighted AUC={test_auc:.4f}")
+    if Testing:
+        print(f"Test (2011-2021): weighted log-loss={test_ll:.4f} | weighted AUC={test_auc:.4f}")
 
     validation_pred_df = df_val_lag[[COUNTRY_COL, TIME_COL, CRISIS_COL]].copy()
     validation_pred_df = validation_pred_df.rename(columns={CRISIS_COL: "actual_crisis"})
     validation_pred_df["predicted_crisis_prob"] = np.asarray(val_proba, dtype=float)
     validation_pred_df["predicted_crisis"] = (np.asarray(val_proba, dtype=float) >= 0.5).astype(np.int64)
+    if Testing:
+        testing_pred_df = df_test_lag[[COUNTRY_COL, TIME_COL, CRISIS_COL]].copy()
+        testing_pred_df = testing_pred_df.rename(columns={CRISIS_COL: "actual_crisis"})
+        testing_pred_df["predicted_crisis_prob"] = np.asarray(test_proba, dtype=float)
+        testing_pred_df["predicted_crisis"] = (np.asarray(test_proba, dtype=float) >= 0.5).astype(np.int64)
 
     perf_df = pd.DataFrame([
         {"Split": "Train (1985-2007)", "weighted_log_loss": train_ll, "weighted_AUC": train_auc},
         {"Split": "Validation (2008-2010)", "weighted_log_loss": val_ll, "weighted_AUC": val_auc},
     ])
+    if Testing:
+        perf_df = pd.concat(
+            [
+                perf_df,
+                pd.DataFrame(
+                    [{"Split": "Test (2011-2021)", "weighted_log_loss": test_ll, "weighted_AUC": test_auc}]
+                ),
+            ],
+            ignore_index=True,
+        )
     n_controls = len(CONTROL_COLS_FULL)
     n_logged = len(list_for_control_log_transformation)
     std_part = "_".join(list_for_winsorization)
@@ -488,6 +507,8 @@ def main():
         reg_df.to_excel(writer, sheet_name="Regression")
         val_table.to_excel(writer, sheet_name="Alpha_selection", index=False)
         validation_pred_df.to_excel(writer, sheet_name="Validation_predictions", index=False)
+        if Testing:
+            testing_pred_df.to_excel(writer, sheet_name="Testing_predictions", index=False)
     print(f"\nPerformance saved: {perf_path}")
 
     for col in lagged_cols:
