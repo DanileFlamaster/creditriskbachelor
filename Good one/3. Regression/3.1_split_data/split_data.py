@@ -14,9 +14,9 @@ WORLD_TIME_COL = "Year"
 CRISIS_COL = "GFDD.OI.19"
 
 # Period definitions (inclusive)
-TRAIN_YEARS = (1985, 2007)
-VAL_YEARS = (2008, 2010)
-TEST_YEARS = (2011, 2021)
+TRAIN_YEARS = (1985, 2016)
+VAL_YEARS = (2017, 2019)
+TEST_YEARS = (2020, 2021)
 
 
 def load_final_data():
@@ -27,6 +27,14 @@ def load_final_data():
 
 def split_by_year(df, time_col, start_year, end_year):
     return df[(df[time_col] >= start_year) & (df[time_col] <= end_year)]
+
+
+def period_label(period_name, years):
+    return f"{period_name} ({years[0]}-{years[1]})"
+
+
+def period_filename(period_name, years):
+    return f"{period_name.lower()}_{years[0]}_{years[1]}.xlsx"
 
 
 def imbalance_row(df, period_name):
@@ -55,9 +63,9 @@ def main():
     world_test = split_by_year(world_gdp_df, WORLD_TIME_COL, TEST_YEARS[0], TEST_YEARS[1])
 
     # Save splits
-    train_path = SCRIPT_DIR / "train_1985_2007.xlsx"
-    val_path = SCRIPT_DIR / "validation_2008_2010.xlsx"
-    test_path = SCRIPT_DIR / "test_2011_2021.xlsx"
+    train_path = SCRIPT_DIR / period_filename("train", TRAIN_YEARS)
+    val_path = SCRIPT_DIR / period_filename("validation", VAL_YEARS)
+    test_path = SCRIPT_DIR / period_filename("test", TEST_YEARS)
     with pd.ExcelWriter(train_path) as writer:
         train.to_excel(writer, sheet_name="Cleaned data", index=False)
         world_train.to_excel(writer, sheet_name="World GDP Growth", index=False)
@@ -72,9 +80,9 @@ def main():
 
     # Imbalance table: one row per period
     imbalance_rows = [
-        imbalance_row(train, "Train (1985-2007)"),
-        imbalance_row(val, "Validation (2008-2010)"),
-        imbalance_row(test, "Test (2011-2021)"),
+        imbalance_row(train, period_label("Train", TRAIN_YEARS)),
+        imbalance_row(val, period_label("Validation", VAL_YEARS)),
+        imbalance_row(test, period_label("Test", TEST_YEARS)),
     ]
     imbalance_table = pd.DataFrame(imbalance_rows)
     imbalance_path = SCRIPT_DIR / "Imbalance_table.xlsx"

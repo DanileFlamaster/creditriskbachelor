@@ -62,7 +62,12 @@ def add_lagged_columns_with_context(
         to guard against accidental overlap.
     """
     if df_target.empty:
-        return df_target.copy()
+        out = df_target.copy()
+        for col in columns_to_lag:
+            lag_col = f"{col}_LAG{lag_periods}"
+            if lag_col not in out.columns:
+                out[lag_col] = pd.Series(dtype="float64")
+        return out
 
     # Work on copies; tag origin so we can return only target rows after shifting.
     hist = df_history.copy()

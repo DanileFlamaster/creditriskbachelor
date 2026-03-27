@@ -17,17 +17,17 @@ list_for_control_log_transformation = []
 SCRIPT_DIR = Path(__file__).resolve().parent
 PARENT_DIR = SCRIPT_DIR.parent  # Good one/3. Regression
 SPLIT_DIR = PARENT_DIR / "3.1_split_data"
-TRAIN_PATH = SPLIT_DIR / "train_1985_2007.xlsx"
-VAL_PATH = SPLIT_DIR / "validation_2008_2010.xlsx"
-TEST_PATH = SPLIT_DIR / "test_2011_2021.xlsx"
+TRAIN_PATH = SPLIT_DIR / "train_1985_2016.xlsx"
+VAL_PATH = SPLIT_DIR / "validation_2017_2019.xlsx"
+TEST_PATH = SPLIT_DIR / "test_2020_2021.xlsx"
 
 
 CRISIS_COL = "GFDD.OI.19"  # 1 = crisis, 0 = no crisis
 COUNTRY_COL = "Country Name"
 TIME_COL = "Time"
-COUNTRY_FIXED_EFFECTS: bool = False  # True: include country dummies
+COUNTRY_FIXED_EFFECTS: bool = True  # True: include country dummies
 YEAR_FIXED_EFFECTS: bool = False  # True: include year dummies
-GDP: bool = True  # True: include Read_GDP_growth as a FE proxy
+GDP: bool = False  # True: include Read_GDP_growth as a FE proxy
 WORLD_GDP: bool = False  # True: include World_GDP_growth from the split workbook's World GDP Growth sheet
 TIME_trend: bool = False  # True: include a linear time trend based on year
 Testing: bool = True  # True: also evaluate the fitted model on the test split
@@ -288,9 +288,23 @@ def main():
             + (["World_GDP_growth"] if WORLD_GDP else [])
         )
     )
-    df_train = df_train[[c for c in required if c in df_train.columns]].dropna().copy()
-    df_val = df_val[[c for c in required if c in df_val.columns]].dropna().copy()
-    df_test = df_test[[c for c in required if c in df_test.columns]].dropna().copy()
+    df_train = df_train[[c for c in required if c in df_train.columns]].copy()
+    df_val = df_val[[c for c in required if c in df_val.columns]].copy()
+    df_test = df_test[[c for c in required if c in df_test.columns]].copy()
+
+    pre_lag_required_cols = [CRISIS_COL, COUNTRY_COL, TIME_COL]
+    if GDP:
+        pre_lag_required_cols.append("Read_GDP_growth")
+    if WORLD_GDP:
+        pre_lag_required_cols.append("World_GDP_growth")
+    df_train = df_train.dropna(subset=[c for c in pre_lag_required_cols if c in df_train.columns]).copy()
+    df_val = df_val.dropna(subset=[c for c in pre_lag_required_cols if c in df_val.columns]).copy()
+    df_test = df_test.dropna(subset=[c for c in pre_lag_required_cols if c in df_test.columns]).copy()
+
+    splits_for_lag_availability = [df_train, df_val] + ([df_test] if Testing else [])
+    available_lag_input_cols = [
+        c for c in COLS_TO_LAG if all(c in split_df.columns for split_df in splits_for_lag_availability)
+    ]
 
     # Fit transforms on train only, apply to validation/test.
     winsor_params = _fit_winsor_params(df_train, [c for c in list_for_winsorization if c in df_train.columns])
@@ -312,37 +326,58 @@ def main():
         control_variables.log_transform_variables(df_test, log_vars, inplace=True, min_per_var=train_mins)
 
     df_train_lag = fixed_effects.add_lagged_columns(
-        df_train, COLS_TO_LAG, LAG_PERIODS, COUNTRY_COL, TIME_COL
+        df_train, available_lag_input_cols, LAG_PERIODS, COUNTRY_COL, TIME_COL
     )
-    lagged_cols = fixed_effects.lagged_column_names(COLS_TO_LAG, LAG_PERIODS)
-    df_train_lag = df_train_lag.dropna(subset=lagged_cols)
+    lagged_cols = fixed_effects.lagged_column_names(available_lag_input_cols, LAG_PERIODS)
 
     df_val_lag = fixed_effects.add_lagged_columns_with_context(
         df_history=df_train,
         df_target=df_val,
-        columns_to_lag=COLS_TO_LAG,
+        columns_to_lag=available_lag_input_cols,
         lag_periods=LAG_PERIODS,
         country_col=COUNTRY_COL,
         time_col=TIME_COL,
         strict_time_order=True,
-    ).dropna(subset=lagged_cols)
+    )
 
     df_hist_for_test = pd.concat([df_train, df_val], ignore_index=True)
     df_test_lag = fixed_effects.add_lagged_columns_with_context(
         df_history=df_hist_for_test,
         df_target=df_test,
-        columns_to_lag=COLS_TO_LAG,
+        columns_to_lag=available_lag_input_cols,
         lag_periods=LAG_PERIODS,
         country_col=COUNTRY_COL,
         time_col=TIME_COL,
         strict_time_order=True,
-    ).dropna(subset=lagged_cols)
+    )
 
     if TIME_trend:
         base_year = float(pd.to_numeric(df_train[TIME_COL], errors="coerce").dropna().min())
         df_train_lag = _add_time_trend(df_train_lag, base_year=base_year, time_col=TIME_COL, trend_col=TIME_TREND_COL)
         df_val_lag = _add_time_trend(df_val_lag, base_year=base_year, time_col=TIME_COL, trend_col=TIME_TREND_COL)
         df_test_lag = _add_time_trend(df_test_lag, base_year=base_year, time_col=TIME_COL, trend_col=TIME_TREND_COL)
+
+    post_lag_required_cols = [CRISIS_COL, COUNTRY_COL, TIME_COL] + lagged_cols
+    if GDP:
+        post_lag_required_cols.append("Read_GDP_growth")
+    if WORLD_GDP:
+        post_lag_required_cols.append("World_GDP_growth")
+    if TIME_trend:
+        post_lag_required_cols.append(TIME_TREND_COL)
+    df_train_lag = df_train_lag.dropna(subset=[c for c in post_lag_required_cols if c in df_train_lag.columns])
+    df_val_lag = df_val_lag.dropna(subset=[c for c in post_lag_required_cols if c in df_val_lag.columns])
+    df_test_lag = df_test_lag.dropna(subset=[c for c in post_lag_required_cols if c in df_test_lag.columns])
+
+    if df_val_lag.empty:
+        raise ValueError(
+            "Validation split is empty after filtering and lag construction. "
+            "Check the split years and the required regression columns."
+        )
+    if Testing and df_test_lag.empty:
+        raise ValueError(
+            "Test split is empty after filtering and lag construction. "
+            "Check the split years and the required regression columns."
+        )
 
     y_train = np.asarray(df_train_lag[CRISIS_COL], dtype=np.int64)
     y_val = np.asarray(df_val_lag[CRISIS_COL], dtype=np.int64)
