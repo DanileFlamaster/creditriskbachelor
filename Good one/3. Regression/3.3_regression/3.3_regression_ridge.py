@@ -17,17 +17,18 @@ list_for_control_log_transformation = []
 SCRIPT_DIR = Path(__file__).resolve().parent
 PARENT_DIR = SCRIPT_DIR.parent  # Good one/3. Regression
 SPLIT_DIR = PARENT_DIR / "3.1_split_data"
-TRAIN_PATH = SPLIT_DIR / "train_1985_2016.xlsx"
-VAL_PATH = SPLIT_DIR / "validation_2017_2019.xlsx"
-TEST_PATH = SPLIT_DIR / "test_2020_2021.xlsx"
+
+TRAIN_YEARS = (1985, 2013)
+VAL_YEARS = (2014, 2015)
+TEST_YEARS = (2016, 2017)
 
 
 CRISIS_COL = "GFDD.OI.19"  # 1 = crisis, 0 = no crisis
 COUNTRY_COL = "Country Name"
 TIME_COL = "Time"
-COUNTRY_FIXED_EFFECTS: bool = True  # True: include country dummies
+COUNTRY_FIXED_EFFECTS: bool = False  # True: include country dummies
 YEAR_FIXED_EFFECTS: bool = False  # True: include year dummies
-GDP: bool = False  # True: include Read_GDP_growth as a FE proxy
+GDP: bool = True  # True: include Read_GDP_growth as a FE proxy
 WORLD_GDP: bool = False  # True: include World_GDP_growth from the split workbook's World GDP Growth sheet
 TIME_trend: bool = False  # True: include a linear time trend based on year
 Testing: bool = True  # True: also evaluate the fitted model on the test split
@@ -63,8 +64,16 @@ def _load_module(module_name: str, file_path: Path):
 standardization = _load_module("standardization", PARENT_DIR / "3.3_standardization.py")
 class_weights = _load_module("class_weights", PARENT_DIR / "3.2_class_weights" / "3.2_class_weights.py")
 fixed_effects = _load_module("fixed_effects", PARENT_DIR / "3.4_fixed_effects.py")
+split_data_config = _load_module("split_data_config", SPLIT_DIR / "split_data.py")
 # 3.5 at project root (parent of "Good one")
 control_variables = _load_module("control_variables", PARENT_DIR.parent.parent / "3.5_control_variables.py")
+
+TRAIN_PATH = SPLIT_DIR / split_data_config.period_filename("train", TRAIN_YEARS)
+VAL_PATH = SPLIT_DIR / split_data_config.period_filename("validation", VAL_YEARS)
+TEST_PATH = SPLIT_DIR / split_data_config.period_filename("test", TEST_YEARS)
+TRAIN_LABEL = split_data_config.period_label("Train", TRAIN_YEARS)
+VAL_LABEL = split_data_config.period_label("Validation", VAL_YEARS)
+TEST_LABEL = split_data_config.period_label("Test", TEST_YEARS)
 
 
 def _fit_winsor_params(df: pd.DataFrame, columns: list[str], lower: float = 0.01, upper: float = 0.99) -> dict:
@@ -502,10 +511,10 @@ def main():
         test_proba = res.predict(X_test_const)
         test_ll, test_auc = _metrics(y_test, test_proba, w_test)
     print("\nPerformance:")
-    print(f"Train (1985-2007): weighted log-loss={train_ll:.4f} | weighted AUC={train_auc:.4f}")
-    print(f"Validation (2008-2010): weighted log-loss={val_ll:.4f} | weighted AUC={val_auc:.4f}")
+    print(f"{TRAIN_LABEL}: weighted log-loss={train_ll:.4f} | weighted AUC={train_auc:.4f}")
+    print(f"{VAL_LABEL}: weighted log-loss={val_ll:.4f} | weighted AUC={val_auc:.4f}")
     if Testing:
-        print(f"Test (2011-2021): weighted log-loss={test_ll:.4f} | weighted AUC={test_auc:.4f}")
+        print(f"{TEST_LABEL}: weighted log-loss={test_ll:.4f} | weighted AUC={test_auc:.4f}")
 
     validation_pred_df = df_val_lag[[COUNTRY_COL, TIME_COL, CRISIS_COL]].copy()
     validation_pred_df = validation_pred_df.rename(columns={CRISIS_COL: "actual_crisis"})
@@ -518,15 +527,15 @@ def main():
         testing_pred_df["predicted_crisis"] = (np.asarray(test_proba, dtype=float) >= 0.5).astype(np.int64)
 
     perf_df = pd.DataFrame([
-        {"Split": "Train (1985-2007)", "weighted_log_loss": train_ll, "weighted_AUC": train_auc},
-        {"Split": "Validation (2008-2010)", "weighted_log_loss": val_ll, "weighted_AUC": val_auc},
+        {"Split": TRAIN_LABEL, "weighted_log_loss": train_ll, "weighted_AUC": train_auc},
+        {"Split": VAL_LABEL, "weighted_log_loss": val_ll, "weighted_AUC": val_auc},
     ])
     if Testing:
         perf_df = pd.concat(
             [
                 perf_df,
                 pd.DataFrame(
-                    [{"Split": "Test (2011-2021)", "weighted_log_loss": test_ll, "weighted_AUC": test_auc}]
+                    [{"Split": TEST_LABEL, "weighted_log_loss": test_ll, "weighted_AUC": test_auc}]
                 ),
             ],
             ignore_index=True,

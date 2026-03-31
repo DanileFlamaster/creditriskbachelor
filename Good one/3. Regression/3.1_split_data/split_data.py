@@ -14,9 +14,9 @@ WORLD_TIME_COL = "Year"
 CRISIS_COL = "GFDD.OI.19"
 
 # Period definitions (inclusive)
-TRAIN_YEARS = (1985, 2016)
-VAL_YEARS = (2017, 2019)
-TEST_YEARS = (2020, 2021)
+TRAIN_YEARS = (1985, 2013)
+VAL_YEARS = (2014, 2015)
+TEST_YEARS = (2016, 2017)
 
 
 def load_final_data():
